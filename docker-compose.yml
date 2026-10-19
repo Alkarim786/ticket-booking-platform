@@ -1,0 +1,61 @@
+# cp .env.example .env && docker compose up --build    -> http://localhost:3000
+x-backend: &backend
+  build: ./backend
+  image: ticket-booking-backend:local
+  env_file: .env
+  environment:
+    DB_URL: jdbc:postgresql://postgres:5432/tickets
+    DB_USER: tickets
+    DB_PASSWORD: ${POSTGRES_PASSWORD}
+    REDIS_HOST: redis
+    FRONTEND_URL: http://localhost:3000
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tickets
+      POSTGRES_USER: tickets
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tickets"]
+      interval: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+  backend-1:
+    <<: *backend
+  backend-2:
+    <<: *backend
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/tickets
+      DB_USER: tickets
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      FRONTEND_URL: http://localhost:3000
+      SEED_DATA: "false" # only one replica seeds
+  frontend:
+    build: ./frontend
+    image: ticket-booking-frontend:local
+    ports: ["3000:80"]
+    depends_on: [backend-1, backend-2]
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: ["load"]
+    volumes: ["./scripts/k6:/scripts"]
+    environment:
+      BASE_URL: http://frontend
+      ADMIN_EMAIL: admin@tickets.local
+      ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+    command: ["run", "/scripts/rush.js"]
+
+volumes:
+  pgdata:
